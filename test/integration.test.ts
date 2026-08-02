@@ -65,4 +65,32 @@ describe.skipIf(!enabled)("vng integration", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 120_000);
+
+  test("cid conflict: occupying cid 3 forces VMManager to retry with a new cid", async () => {
+    const { VMManager } = await import("../src/manager");
+    const occupied = 3 + Math.floor(Math.random() * 200);
+    // occupy the cid with a real VM started behind the plugin's back
+    const dir2 = mkdtempSync(join(tmpdir(), "pi-vng-test-"));
+    spawnDetached(["-r", "--ssh", String(occupied), "--name", `occupier${occupied}`, "--quiet"], join(dir2, "occ.log"));
+    try {
+      const occReady = await waitForReady(occupied, 60_000);
+      expect(occReady).toBe(true);
+
+      // force the manager to try the occupied cid first, then fall through
+      const m = new VMManager();
+      m.markCidUsed(3);
+      for (let i = 3; i < occupied; i++) m.markCidUsed(i);
+      const vm = await m.start("conflict-test", undefined, ["--quiet"]);
+      expect(vm.cid).toBe(occupied + 1); // skipped the occupied cid
+      expect(vm.status).toBe("running");
+
+      // the new VM is actually reachable
+      const { code } = await execSync(vm.cid, "true");
+      expect(code).toBe(0);
+    } finally {
+      await killQemu(occupied);
+      await killQemu(occupied + 1);
+      rmSync(dir2, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

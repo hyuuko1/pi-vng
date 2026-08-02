@@ -1,5 +1,5 @@
 import { spawn, execFile } from "node:child_process";
-import { openSync, readFileSync } from "node:fs";
+import { openSync, closeSync, writeSync, readFileSync } from "node:fs";
 
 export const VNG_BIN = "vng";
 
@@ -20,18 +20,50 @@ export function buildStartArgs(cid: number, name: string, kernel: string | undef
   return [...runArgs, "--ssh", String(cid), "--name", name, ...filtered];
 }
 
+/** Whether stderr text indicates a vsock guest-cid conflict */
+export function isCidConflictText(text: string): boolean {
+  return /unable to set guest cid[^\n]*Address already in use/.test(text);
+}
+
+/** A detached vng process with captured stderr (teed to the log file) */
+export interface VngProcess {
+  child: import("node:child_process").ChildProcess;
+  /** Cumulative stderr text collected so far */
+  stderrText(): string;
+  /** True once stderr shows a vsock cid conflict */
+  hasCidConflict(): boolean;
+}
+
 /** Build `vng --ssh-client` exec args */
 export function buildExecArgs(cid: number, command: string): string[] {
   return ["--ssh-client", String(cid), "--remote-cmd", command];
 }
 
-/** Spawn vng in the background with stdio redirected to a log file (detached so it survives pi exit) */
-export function spawnDetached(args: string[], logPath: string): void {
+/** Spawn vng in the background (detached so it survives pi exit), teeing stdout/stderr
+ *  into the log file while capturing stderr for cid-conflict detection */
+export function spawnDetached(args: string[], logPath: string): VngProcess {
   const logFd = openSync(logPath, "a");
-  spawn(VNG_BIN, args, {
+  const child = spawn(VNG_BIN, args, {
     detached: true,
-    stdio: ["ignore", logFd, logFd],
-  }).unref();
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stderrText = "";
+  child.stdout.on("data", (d) => {
+    try { writeSync(logFd, d); } catch { /* ignore */ }
+  });
+  child.stderr.on("data", (d) => {
+    stderrText += d;
+    try { writeSync(logFd, d); } catch { /* ignore */ }
+  });
+  child.on("close", () => {
+    try { closeSync(logFd); } catch { /* ignore */ }
+  });
+  child.unref();
+  return {
+    child,
+    stderrText: () => stderrText,
+    hasCidConflict: () => isCidConflictText(stderrText),
+  };
 }
 
 /** Run a command to completion, collecting stdout/stderr and the exit code */
@@ -97,10 +129,12 @@ export async function killQemu(cid: number): Promise<void> {
   }
 }
 
-/** Poll ssh-client until a command succeeds; used for VM readiness probing */
-export async function waitForReady(cid: number, timeoutMs: number): Promise<boolean> {
+/** Poll ssh-client until a command succeeds; used for VM readiness probing.
+ *  If isConflict() turns true during polling, fail fast (returns false). */
+export async function waitForReady(cid: number, timeoutMs: number, isConflict?: () => boolean): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (isConflict?.()) return false; // cid conflict detected on the vng process stderr: fail fast
     const { code } = await execSync(cid, "true");
     if (code === 0) return true;
     await new Promise((r) => setTimeout(r, 500));

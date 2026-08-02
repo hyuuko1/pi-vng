@@ -1,4 +1,4 @@
-import { spawnDetached, waitForReady, killQemu, findQemuPidByCid, buildStartArgs } from "./vng";
+import { spawnDetached, waitForReady, killQemu, findQemuPidByCid, buildStartArgs, isCidConflictText } from "./vng";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,10 @@ export interface VmRecord {
 export const CID_START = 3;
 export const CID_MAX_ATTEMPTS = 20;
 export const READY_TIMEOUT_MS = 60_000;
+/** After readiness, wait this long before trusting it: a conflicting qemu dies within ~1s
+ *  (measured ~760ms), so this lets the vng chain exit and reveals the conflict instead of
+ *  mistaking a probe that connected to someone else's VM on the same cid for success. */
+export const READY_GRACE_MS = 1_500;
 
 export class VMManager {
   private vms = new Map<string, VmRecord>();
@@ -23,8 +27,22 @@ export class VMManager {
 
   /** Actual vng startup logic (injectable in tests) */
   startVm = async (cid: number, name: string, kernel: string | undefined, extraArgs: string[], logPath: string): Promise<void> => {
-    spawnDetached(buildStartArgs(cid, name, kernel, extraArgs), logPath);
-    const ready = await waitForReady(cid, READY_TIMEOUT_MS);
+    const proc = spawnDetached(buildStartArgs(cid, name, kernel, extraArgs), logPath);
+    // Fail fast once the vng process exits (qemu dies on a cid conflict, taking the chain down with it)
+    const ready = await waitForReady(cid, READY_TIMEOUT_MS, () => proc.child.exitCode !== null);
+    if (ready) {
+      // Grace period: a conflicting qemu dies within ~1s. Without it, a readiness probe that
+      // connected to another VM on the same cid would be mistaken for our VM being ready.
+      await new Promise((r) => setTimeout(r, READY_GRACE_MS));
+    }
+    if (proc.child.exitCode !== null) {
+      // vng exited before becoming ready: startup failed (typically a cid conflict)
+      if (proc.hasCidConflict()) {
+        throw new Error("unable to set guest cid: Address already in use");
+      }
+      const stderr = proc.stderrText().trim();
+      throw new Error(`vng exited early (code ${proc.child.exitCode})${stderr ? `: ${stderr.slice(0, 500)}` : ""}`);
+    }
     if (!ready) throw new Error(`VM ${name} failed to become ready within 60s`);
   };
 
@@ -112,5 +130,5 @@ export class VMManager {
 
 /** Whether the error is a vsock cid conflict */
 export function isCidConflict(err: unknown): boolean {
-  return err instanceof Error && err.message.includes("unable to set guest cid: Address already in use");
+  return err instanceof Error && isCidConflictText(err.message);
 }

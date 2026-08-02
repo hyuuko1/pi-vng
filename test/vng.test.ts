@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildStartArgs, buildExecArgs } from "../src/vng";
+import { buildStartArgs, buildExecArgs, isCidConflictText } from "../src/vng";
 
 describe("buildStartArgs", () => {
   test("injects --ssh cid and --name", () => {
@@ -28,5 +28,16 @@ describe("buildExecArgs", () => {
     expect(buildExecArgs(3, "uname -a")).toEqual([
       "--ssh-client", "3", "--remote-cmd", "uname -a",
     ]);
+  });
+});
+
+describe("isCidConflictText", () => {
+  test("detects the vsock cid conflict message", () => {
+    expect(isCidConflictText("qemu-system-x86_64: -device vhost-vsock-device: unable to set guest cid: Address already in use")).toBe(true);
+  });
+
+  test("rejects unrelated errors", () => {
+    expect(isCidConflictText("qemu-system-x86_64: failed to open /dev/kvm")).toBe(false);
+    expect(isCidConflictText("")).toBe(false);
   });
 });
