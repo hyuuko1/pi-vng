@@ -47,4 +47,35 @@ describe("Monitor", () => {
     await mon.checkOnce();
     expect(died).toBe(0);
   });
+
+  test("stopping VMs do not trigger death reports (intentional stop)", async () => {
+    const mgr = new VMManager();
+    mgr.restore([{ name: "vm4", cid: 6, status: "stopping", startedAt: 0, extraArgs: [], kernel: "host" }]);
+    const mon = new Monitor(mgr);
+    let died = 0;
+    mon.onVmDied = () => { died++; };
+    (mgr as any).findQemuPid = async () => undefined;
+    await mon.checkOnce();
+    expect(died).toBe(0);
+  });
+
+  test("a restarted VM is reported again after its second death", async () => {
+    const mgr = new VMManager();
+    mgr.restore([{ name: "vm5", cid: 7, status: "running", startedAt: 0, extraArgs: [], kernel: "host" }]);
+    const mon = new Monitor(mgr);
+    let died = 0;
+    mon.onVmDied = () => { died++; };
+
+    (mgr as any).findQemuPid = async () => undefined;
+    await mon.checkOnce();
+    expect(died).toBe(1); // first death reported
+
+    (mgr as any).findQemuPid = async () => 1234; // restarted, alive again
+    await mon.checkOnce();
+    expect(died).toBe(1); // alive: no report, dedup reset
+
+    (mgr as any).findQemuPid = async () => undefined;
+    await mon.checkOnce();
+    expect(died).toBe(2); // second death reported again
+  });
 });

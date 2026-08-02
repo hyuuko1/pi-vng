@@ -21,9 +21,14 @@ export class Monitor {
   /** Single liveness check (testable) */
   async checkOnce(): Promise<void> {
     for (const vm of this.mgr.list()) {
-      if (vm.status !== "running") continue;
+      if (vm.status !== "running") continue; // starting/stopping/stopped are not checked
       const pid = await this.mgr.findQemuPid(vm.name);
-      if (pid === undefined && !this.reported.has(vm.name)) {
+      if (pid !== undefined) {
+        // alive: reset the report dedup so a later death (e.g. after a same-name restart) is reported again
+        this.reported.delete(vm.name);
+        continue;
+      }
+      if (!this.reported.has(vm.name)) {
         this.reported.add(vm.name);
         vm.status = "stopped";
         this.onVmDied?.(vm.name, vm.cid);

@@ -172,7 +172,7 @@ export default function (pi: ExtensionAPI) {
     currentCtx = ctx;
     const saved = loadState(statePath());
     if (saved) {
-      mgr.restore(saved.vms.filter((v) => v.status !== "stopped"));
+      mgr.restore(saved.vms.filter((v) => v.status !== "stopped" && v.status !== "stopping"));
       tasks.restore(saved.tasks.filter((t) => t.status === "running"));
       // Liveness is re-verified by the monitor's first checkOnce
     }

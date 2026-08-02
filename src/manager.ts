@@ -6,7 +6,7 @@ import { join } from "node:path";
 export interface VmRecord {
   name: string;
   cid: number;
-  status: "starting" | "running" | "stopped";
+  status: "starting" | "running" | "stopping" | "stopped";
   startedAt: number;
   extraArgs: string[];
   kernel: string; // "host" or a user-specified kernel path
@@ -76,6 +76,7 @@ export class VMManager {
   async stop(name: string): Promise<void> {
     const vm = this.vms.get(name);
     if (!vm) throw new Error(`VM "${name}" does not exist`);
+    vm.status = "stopping"; // monitor skips this state, so no spurious crash report
     await killQemu(vm.cid);
     vm.status = "stopped";
   }
