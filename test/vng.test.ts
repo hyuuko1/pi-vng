@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildStartArgs, buildExecArgs, isCidConflictText } from "../src/vng";
+import { buildStartArgs, buildExecArgs, isCidConflictText, extractGuestCid } from "../src/vng";
 
 describe("buildStartArgs", () => {
   test("injects --ssh cid and --name", () => {
@@ -39,5 +39,17 @@ describe("isCidConflictText", () => {
   test("rejects unrelated errors", () => {
     expect(isCidConflictText("qemu-system-x86_64: failed to open /dev/kvm")).toBe(false);
     expect(isCidConflictText("")).toBe(false);
+  });
+});
+
+describe("extractGuestCid", () => {
+  test("parses guest-cid from a qemu device arg", () => {
+    expect(extractGuestCid("vhost-vsock-device,guest-cid=107")).toBe(107);
+    expect(extractGuestCid("guest-cid=3")).toBe(3);
+  });
+
+  test("returns undefined when absent", () => {
+    expect(extractGuestCid("virtio-serial-device")).toBeUndefined();
+    expect(extractGuestCid("guest-cid=")).toBeUndefined();
   });
 });

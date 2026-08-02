@@ -93,4 +93,34 @@ describe.skipIf(!enabled)("vng integration", () => {
       rmSync(dir2, { recursive: true, force: true });
     }
   }, 120_000);
+
+  test("discoverOccupiedCids skips externally occupied cids upfront (no retry needed)", async () => {
+    const { VMManager } = await import("../src/manager");
+    const cidA = 3 + Math.floor(Math.random() * 200);
+    const dir3 = mkdtempSync(join(tmpdir(), "pi-vng-test-"));
+    spawnDetached(["-r", "--ssh", String(cidA), "--name", `external${cidA}`, "--quiet"], join(dir3, "ext.log"));
+    let freshCid: number | undefined;
+    try {
+      const ready = await waitForReady(cidA, 60_000);
+      expect(ready).toBe(true);
+
+      // a fresh manager (like a new session) discovers the occupied cid upfront
+      const m = new VMManager();
+      const found = await m.discoverOccupiedCids();
+      expect(found).toContain(cidA);
+      // the very first allocation already skips it
+      expect(m.nextCid()).not.toBe(cidA);
+
+      const vm = await m.start("fresh", undefined, ["--quiet"]);
+      freshCid = vm.cid;
+      expect(vm.cid).not.toBe(cidA);
+      expect(vm.status).toBe("running");
+      const { code } = await execSync(vm.cid, "true");
+      expect(code).toBe(0);
+    } finally {
+      await killQemu(cidA);
+      if (freshCid !== undefined) await killQemu(freshCid);
+      rmSync(dir3, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

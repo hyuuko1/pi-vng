@@ -1,4 +1,4 @@
-import { spawnDetached, waitForReady, killQemu, findQemuPidByCid, buildStartArgs, isCidConflictText } from "./vng";
+import { spawnDetached, waitForReady, killQemu, findQemuPidByCid, buildStartArgs, isCidConflictText, scanOccupiedCids } from "./vng";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -57,6 +57,13 @@ export class VMManager {
   /** Mark a cid as taken (called after an external conflict is detected) */
   markCidUsed(cid: number): void {
     this.usedCids.add(cid);
+  }
+
+  /** Discover cids occupied by running qemu VMs (started manually or by other sessions) and mark them used */
+  async discoverOccupiedCids(): Promise<number[]> {
+    const cids = await scanOccupiedCids();
+    for (const c of cids) this.markCidUsed(c);
+    return cids;
   }
 
   /** Start a VM, retrying with a new cid on vsock conflicts. A stopped VM can be restarted under the same name. */

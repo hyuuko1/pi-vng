@@ -99,6 +99,32 @@ export async function findQemuPidByCid(cid: number): Promise<number | undefined>
   return undefined;
 }
 
+/** Extract the vsock guest-cid from a qemu -device argument, e.g. "vhost-vsock-device,guest-cid=107" */
+export function extractGuestCid(arg: string): number | undefined {
+  const m = arg.match(/guest-cid=(\d+)/);
+  return m ? Number(m[1]) : undefined;
+}
+
+/** Scan all running qemu processes for their vsock guest-cids
+ *  (covers VMs started manually or by other sessions, so the next cid can skip them upfront) */
+export async function scanOccupiedCids(): Promise<number[]> {
+  const out = await execFileAsync("pgrep", ["-f", "qemu-system.*guest-cid="]);
+  const cids: number[] = [];
+  for (const line of out.trim().split("\n")) {
+    const pid = Number(line);
+    if (!pid || !isQemuProcess(pid)) continue;
+    const cmdline = readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    for (const arg of cmdline) {
+      const cid = extractGuestCid(arg);
+      if (cid !== undefined) {
+        cids.push(cid);
+        break;
+      }
+    }
+  }
+  return cids;
+}
+
 function isQemuProcess(pid: number): boolean {
   try {
     const comm = readFileSync(`/proc/${pid}/comm`, "utf8").trim();

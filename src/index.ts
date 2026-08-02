@@ -176,6 +176,8 @@ export default function (pi: ExtensionAPI) {
       tasks.restore(saved.tasks.filter((t) => t.status === "running"));
       // Liveness is re-verified by the monitor's first checkOnce
     }
+    // Skip cids occupied by running qemu VMs from other sessions or started manually
+    await mgr.discoverOccupiedCids();
     monitor.start();
   });
 
